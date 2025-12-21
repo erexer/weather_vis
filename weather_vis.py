@@ -1,10 +1,13 @@
-import streamlit as st
-import pandas as pd
-import pydeck as pdk
+import calendar
 import os
 
+import pandas as pd
+import pydeck as pdk
+import streamlit as st
+
+
 # Set page configuration
-st.set_page_config(page_title="Seattle Weather Visualization", layout="wide")
+st.set_page_config(page_title="Weather Visualization", layout="wide")
 
 # --- MAPPINGS ---
 # Based on NOAA GSOM documentation
@@ -26,37 +29,51 @@ def load_data(file_path):
     try:
         df = pd.read_csv(file_path)
         
-        # Standardize Date
-        df['DATE'] = pd.to_datetime(df['DATE'])
-        
-        # Create helper columns
-        df['Month'] = df['DATE'].dt.month
-        df['Month_Name'] = df['DATE'].dt.month_name()
-        
-        # Season Mapping
-        season_map = {
-            12: 'Winter', 1: 'Winter', 2: 'Winter',
-            3: 'Spring', 4: 'Spring', 5: 'Spring',
-            6: 'Summer', 7: 'Summer', 8: 'Summer',
-            9: 'Autumn', 10: 'Autumn', 11: 'Autumn'
-        }
-        df['Season'] = df['DATE'].dt.month.map(season_map)
-        
+        # Scenario 1: Raw Data (Has specific dates, e.g., "2023-01-01")
+        if 'DATE' in df.columns:
+            df['DATE'] = pd.to_datetime(df['DATE'])
+            df['Month'] = df['DATE'].dt.month
+            df['Month_Name'] = df['DATE'].dt.month_name()
+            
+            # Season Mapping
+            season_map = {
+                12: 'Winter', 1: 'Winter', 2: 'Winter',
+                3: 'Spring', 4: 'Spring', 5: 'Spring',
+                6: 'Summer', 7: 'Summer', 8: 'Summer',
+                9: 'Autumn', 10: 'Autumn', 11: 'Autumn'
+            }
+            df['Season'] = df['DATE'].dt.month.map(season_map)
+            
+        # Scenario 2: Pre-Processed Data (Already has Month/Season, no specific Date)
+        elif 'Month' in df.columns:
+            # Create a helper Month_Name column for display
+            df['Month_Name'] = df['Month'].apply(lambda x: calendar.month_name[x])
+            # Ensure Season exists (if not in file, map it)
+            if 'Season' not in df.columns:
+                 season_map = {
+                    12: 'Winter', 1: 'Winter', 2: 'Winter',
+                    3: 'Spring', 4: 'Spring', 5: 'Spring',
+                    6: 'Summer', 7: 'Summer', 8: 'Summer',
+                    9: 'Autumn', 10: 'Autumn', 11: 'Autumn'
+                }
+                 df['Season'] = df['Month'].map(season_map)
+                 
         return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return None
 
+
 # --- MAIN APP ---
-st.title("Seattle Weather Data Visualizer")
-st.markdown("Explore weather patterns in the Seattle area using NOAA Climate Data.")
+st.title("Weather Data Visualizer")
+st.markdown("Explore weather patterns. The example data are pulled from NOAA's [Climate Data Online](https://www.ncei.noaa.gov/cdo-web/) for Seattle, WA.")
 
 # Sidebar for controls
 st.sidebar.header("Data Settings")
 
-# Robust File Loading
+# File Loading
 current_dir = os.path.dirname(os.path.abspath(__file__))
-default_path = os.path.join(current_dir, "seattle_weather.csv")
+default_path = os.path.join(current_dir, "data", "seattle_weather_monthly_norms.csv")
 
 uploaded_file = st.sidebar.file_uploader("Upload your NOAA CSV file", type=["csv"])
 
@@ -101,7 +118,8 @@ if df is not None:
         
     elif time_mode == "By Month":
         month_index = st.sidebar.slider("Select Month", 1, 12, 1, format="%d")
-        month_name = pd.to_datetime(f"2023-{month_index}-01").month_name()
+        # Update: Use calendar to get name (works without a DATE column)
+        month_name = calendar.month_name[month_index]
         filtered_df = filtered_df[filtered_df['Month'] == month_index]
         filter_description = f"Average for {month_name}"
 
@@ -120,12 +138,12 @@ if df is not None:
     unit_label = UNIT_MAP.get(metric_code, "")
 
     # 2. Get Date Range
-    if not filtered_df.empty:
+    if 'DATE' in filtered_df.columns:
         start_date = filtered_df['DATE'].min().strftime('%b %Y')
         end_date = filtered_df['DATE'].max().strftime('%b %Y')
         date_range_str = f"({start_date} - {end_date})"
     else:
-        date_range_str = "(No Date Range)"
+        date_range_str = "(Climatological Average)"
 
     # 3. Update Header
     st.subheader(f"Map: {metric_name} {date_range_str}")
@@ -211,11 +229,9 @@ if df is not None:
         display_df = agg_df[['NAME', metric_code]].sort_values(by=metric_code, ascending=False)
         display_df.columns = ['Station', f"{metric_name} ({unit_label})"]
         
-        # Use st.dataframe with use_container_width=True to fill the width
+        # Use st.dataframe with width='stretch' to fill the width
         st.dataframe(
             display_df.style.format({f"{metric_name} ({unit_label})": "{:.2f}"}), 
-            use_container_width=True,
+            width='stretch',
             height=400
         )
-
-st.markdown("These data are pulled from [Climate Data Online](https://www.ncei.noaa.gov/cdo-web/).")
