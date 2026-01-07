@@ -165,24 +165,16 @@ if df is not None:
 
     # 0. MAP APPEARANCE CONTROLS
     st.sidebar.markdown("---")
-
-    # Try to detect default theme (defaults to "dark" if unknown)
     try:
         default_theme = st.get_option("theme.base")
     except:
         default_theme = "dark"
 
-    # We use a checkbox for the Dot Outline because Python can't auto-detect
-    # dynamic theme changes in the browser.
     use_light_mode_dots = st.sidebar.checkbox(
-        "Optimize Dots for Light Mode", value=(default_theme == "light")
+        "Optimize Dots for Light Mode",
+        value=(default_theme == "light"),
+        key="vis_dots_toggle",
     )
-
-    # Set dot outline color based on checkbox
-    if use_light_mode_dots:
-        dot_line_color = [0, 0, 0]  # Black outline for Light Maps
-    else:
-        dot_line_color = [255, 255, 255]  # White outline for Dark Maps
 
     # 1. Determine Units
     UNIT_MAP = {
@@ -206,34 +198,92 @@ if df is not None:
     else:
         date_range_str = "(Climatological Average)"
 
-    # 3. Update Header
     st.subheader(f"Map: {metric_name} {date_range_str}")
 
     if agg_df.empty:
         st.warning("No data available for this selection.")
     else:
-        # --- A. PREPARE DATA ---
+        # --- A. COLOR SCALES ---
+        COLOR_SCALES = {
+            # Blue -> Yellow -> Red (Diverging) for Temperature
+            "temp": [
+                [69, 117, 180],
+                [145, 191, 219],
+                [224, 243, 248],
+                [254, 224, 144],
+                [252, 141, 89],
+                [215, 48, 39],
+            ],
+            # White -> Deep Blue (Sequential) for Precip/Counts
+            "precip": [
+                [247, 251, 255],
+                [222, 235, 247],
+                [198, 219, 239],
+                [107, 174, 214],
+                [49, 130, 189],
+                [8, 81, 156],
+            ],
+        }
+
+        # Select the correct scale and Min/Max logic
+        if metric_code in ["TAVG", "TMAX", "TMIN"]:
+            current_palette = COLOR_SCALES["temp"]
+            # Temperature uses the data's actual min/max
+            min_val = agg_df[metric_code].min()
+        else:
+            current_palette = COLOR_SCALES["precip"]
+            # Precip, Snow, and Counts should always start at 0
+            min_val = 0.0
+
+        max_val = agg_df[metric_code].max()
+
+        # Handle case where max is 0 (e.g., no snow) to avoid weird legends
+        if max_val == 0:
+            max_val = (
+                1.0  # arbitrary cap to prevent divide-by-zero, color will be 0 anyway
+            )
+
+        # Function to interpolate colors
+        def get_color(value, min_v, max_v, palette):
+            # Clamp value to min/max just in case
+            value = max(min_v, min(value, max_v))
+
+            if max_v == min_v:
+                return palette[0]
+
+            ratio = (value - min_v) / (max_v - min_v)
+            idx = ratio * (len(palette) - 1)
+            lower_idx = int(idx)
+            upper_idx = min(lower_idx + 1, len(palette) - 1)
+            remainder = idx - lower_idx
+
+            r = (
+                palette[lower_idx][0] * (1 - remainder)
+                + palette[upper_idx][0] * remainder
+            )
+            g = (
+                palette[lower_idx][1] * (1 - remainder)
+                + palette[upper_idx][1] * remainder
+            )
+            b = (
+                palette[lower_idx][2] * (1 - remainder)
+                + palette[upper_idx][2] * remainder
+            )
+
+            return [int(r), int(g), int(b), 240]
+
+        # Apply color to data
+        agg_df["fill_color"] = agg_df[metric_code].apply(
+            lambda x: get_color(x, min_val, max_val, current_palette)
+        )
         agg_df["formatted_val"] = agg_df[metric_code].apply(
             lambda x: f"{x:.2f} {unit_label}"
         )
 
-        # --- B. COLOR SCALE ---
-        color_range = [
-            [65, 182, 196],
-            [127, 205, 187],
-            [199, 233, 180],
-            [237, 248, 177],
-            [253, 212, 158],
-            [227, 26, 28],
-        ]
+        # --- B. LEGEND (Dynamic CSS) ---
+        gradient_colors = [f"rgb({c[0]},{c[1]},{c[2]})" for c in current_palette]
+        gradient_style = f"linear-gradient(to right, {', '.join(gradient_colors)})"
 
-        min_val = agg_df[metric_code].min()
-        max_val = agg_df[metric_code].max()
-        gradient_style = "linear-gradient(to right, rgb(65, 182, 196), rgb(127, 205, 187), rgb(199, 233, 180), rgb(237, 248, 177), rgb(253, 212, 158), rgb(227, 26, 28))"
-
-        # --- C. LEGEND (AUTO-THEMED) ---
-        # We use var(--text-color) and var(--secondary-background-color)
-        # so this HTML automatically matches your Streamlit theme.
         st.markdown(
             f"""
             <div style='background-color: var(--secondary-background-color); padding: 10px; border-radius: 5px; margin-bottom: 10px; border: 1px solid var(--secondary-background-color);'>
@@ -243,35 +293,29 @@ if df is not None:
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-top: 5px;'>
                     <span style='color: var(--text-color); font-family: monospace;'>{min_val:.1f} {unit_label}</span>
                     <div style='flex-grow: 1; height: 10px; background: {gradient_style}; margin: 0 10px; border-radius: 5px;'></div>
-                    <span style='color: var(--text-color); font-family: monospace;'>{max_val:.1f} {unit_label}</span>
+                    <span style='color: var(--text-color); font-family: monospace;'>{agg_df[metric_code].max():.1f} {unit_label}</span>
                 </div>
             </div>
         """,
             unsafe_allow_html=True,
         )
 
-        # --- D. MAP LAYERS ---
-        heatmap_layer = pdk.Layer(
-            "HeatmapLayer",
-            data=agg_df,
-            get_position="[LONGITUDE, LATITUDE]",
-            get_weight=metric_code,
-            opacity=0.6,
-            pickable=False,
-            radius_pixels=50,
-            intensity=1,
-            threshold=0.05,
-            color_range=color_range,
-        )
+        # --- C. PYDECK MAP ---
+        if use_light_mode_dots:
+            line_color = [0, 0, 0]
+        else:
+            line_color = [255, 255, 255]
 
         scatter_layer = pdk.Layer(
             "ScatterplotLayer",
             data=agg_df,
             get_position="[LONGITUDE, LATITUDE]",
-            get_radius=250,
-            get_fill_color=[50, 50, 50, 150],
-            get_line_color=dot_line_color,  # Dynamic outline color
-            get_line_width=20,
+            get_fill_color="fill_color",
+            get_line_color=line_color,
+            get_line_width=60,
+            get_radius=500,
+            radius_min_pixels=6,
+            radius_max_pixels=30,
             pickable=True,
             auto_highlight=True,
         )
@@ -287,16 +331,16 @@ if df is not None:
 
         st.pydeck_chart(
             pdk.Deck(
-                map_style=None,  # <--- Setting this to None allows Streamlit to auto-set the style
+                map_style=None,
                 initial_view_state=view_state,
-                layers=[heatmap_layer, scatter_layer],
+                layers=[scatter_layer],
                 tooltip=tooltip_html,
             )
         )
 
         st.caption(f"Visualizing {len(agg_df)} stations.")
 
-        # --- E. DATA TABLE ---
+        # --- D. DATA TABLE ---
         st.write("---")
         st.subheader("Top Stations")
 
