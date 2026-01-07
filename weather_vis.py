@@ -83,7 +83,7 @@ def load_data(file_path):
 # --- MAIN APP ---
 st.title("Weather Data Visualizer")
 st.markdown(
-    "Explore weather patterns. The example data are pulled from NOAA's [Climate Data Online](https://www.ncei.noaa.gov/cdo-web/) for Seattle, WA."
+    "Explore weather patterns. The example data are pulled from NOAA's [Climate Data Online](https://www.ncei.noaa.gov/cdo-web/) for Seattle, WA for 2023."
 )
 
 # Sidebar for controls
@@ -324,9 +324,21 @@ if df is not None:
             latitude=47.6062, longitude=-122.3321, zoom=8, pitch=0
         )
 
+        # --- TOOLTIP CONFIGURATION ---
         tooltip_html = {
             "html": "<b>{NAME}</b><br/>" + f"{metric_name}: <b>{{formatted_val}}</b>",
-            "style": {"backgroundColor": "steelblue", "color": "white"},
+            "style": {
+                "backgroundColor": "steelblue",
+                "color": "white",
+                "fontFamily": "sans-serif",  # Clean font
+                "fontSize": "12px",  # Smaller font for mobile
+                "padding": "8px",  # Comfortable padding
+                "borderRadius": "4px",  # Rounded corners
+                "maxWidth": "180px",  # CRITICAL: Forces the box to stay narrow
+                "whiteSpace": "normal",  # CRITICAL: Forces text to wrap to the next line
+                "boxShadow": "0 2px 4px rgba(0,0,0,0.5)",  # Adds a shadow for readability
+                "zIndex": "1000",  # Ensures it stays on top
+            },
         }
 
         st.pydeck_chart(
